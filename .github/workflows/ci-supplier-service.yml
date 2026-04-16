@@ -20,7 +20,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: supplier-service
-  GITOPS_REPO: chandika-s/zen-gitops
+  GITOPS_REPO: ravdy/zen-gitops
 
 jobs:
 

@@ -731,7 +731,7 @@ No long-lived keys ever touch GitHub Secrets. If a workflow run is compromised, 
 
 ---
 
-## GitOps Repo Layout (`chandika-s/zen-gitops`)
+## GitOps Repo Layout (`username/zen-gitops`)
 
 ```
 zen-gitops/

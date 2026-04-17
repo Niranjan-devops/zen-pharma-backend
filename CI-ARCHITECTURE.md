@@ -37,8 +37,8 @@ DEV: fully automatic — fast feedback loop. QA: PR review in zen-gitops — QA 
     ├──────────────────────────►│                               │                         │
     │                           │ ci-pr-<service>.yml           │                         │
     │                           │ ┌─────────────────────────┐   │                         │
-    │                           │ │ Lint · Test · CodeQL    │   │                         │
-    │                           │ │ Semgrep · OWASP Dep     │   │                         │
+    │                           │ │ Gitleaks · Lint · Test  │   │                         │
+    │                           │ │ CodeQL · Semgrep · OWASP│   │                         │
     │                           │ │ (no Docker, no ECR)     │   │                         │
     │                           │ └─────────────────────────┘   │                         │
     │  ✓ Fast feedback (~5 min) │                               │                         │
@@ -49,8 +49,8 @@ DEV: fully automatic — fast feedback loop. QA: PR review in zen-gitops — QA 
     │                           │ ci-<service>.yml              │                         │
     │                           │ ┌─────────────────────────┐   │                         │
     │                           │ │ Job: build              │   │                         │
-    │                           │ │  Maven/npm · CodeQL     │   │                         │
-    │                           │ │  Semgrep · OWASP Dep    │   │                         │
+    │                           │ │  Gitleaks · Maven/npm   │   │                         │
+    │                           │ │  CodeQL · Semgrep · OWASP│   │                         │
     │                           │ │  Docker build           │   │                         │
     │                           │ │  Trivy scan             │   │                         │
     │                           │ │  ECR push → sha-abc1234 │   │                         │
@@ -114,13 +114,13 @@ zen-pharma-backend/
     └── workflows/
         │
         │  ── Reusable building blocks ──────────────────────────────────────────
-        ├── _java-build.yml          ← Full build: Maven + CodeQL + Semgrep +
+        ├── _java-build.yml          ← Full build: Gitleaks + Maven + CodeQL + Semgrep +
         │                                          OWASP + Trivy + ECR + Cosign
-        ├── _node-build.yml          ← Full build: npm + CodeQL + Semgrep +
+        ├── _node-build.yml          ← Full build: Gitleaks + npm + CodeQL + Semgrep +
         │                                          audit + Trivy + ECR + Cosign
-        ├── _java-pr-check.yml       ← Lightweight: Maven + CodeQL + Semgrep +
+        ├── _java-pr-check.yml       ← Lightweight: Gitleaks + Maven + CodeQL + Semgrep +
         │                                           OWASP  (no Docker, no ECR)
-        ├── _node-pr-check.yml       ← Lightweight: npm + CodeQL + Semgrep +
+        ├── _node-pr-check.yml       ← Lightweight: Gitleaks + npm + CodeQL + Semgrep +
         │                                           audit  (no Docker, no ECR)
         │
         │  ── Feature branch checks (feat-*, fix-*, chore-*) ───────────────────
@@ -288,6 +288,38 @@ What never changes: the image digest.
 
 > **Why does `drug-catalog-service` have a different zen-gitops name (`catalog-service`)?**  
 > The GitOps repo was bootstrapped with `catalog-service` as the Helm release name before the application repo settled on `drug-catalog-service`. Renaming it in zen-gitops would require migrating ArgoCD application definitions, Helm release history, and all existing values files. The `ci-drug-catalog.yml` workflow bridges this with a `GITOPS_SERVICE_NAME: catalog-service` env var. The ECR repository and Docker image remain `drug-catalog-service`.
+
+---
+
+## Security tooling — industry categories vs this repository
+
+Common **DevSecOps categories** and **widely used tools** (examples), followed by what **this repo** actually runs in CI (or has wired but disabled).
+
+### Industry reference
+
+| Category | Typical tools (examples) | Role |
+|----------|--------------------------|------|
+| SAST (static application security) | CodeQL, Semgrep, Checkmarx, Veracode, Snyk Code | Find vulnerable patterns and misconfigurations in source code |
+| SCA (software composition analysis) | Snyk, Mend, OWASP Dependency Check, Dependabot, `npm audit` | Find known CVEs in third-party libraries and dependencies |
+| Secrets in repository | Gitleaks, TruffleHog, GitHub secret scanning, git-secrets | Detect API keys, tokens, and credentials committed to Git |
+| Container / artifact scanning | Trivy, Grype, Clair, AWS ECR native scanning | Scan OS packages and layers in built container images |
+| Supply-chain signing | Cosign, Notation, Sigstore | Cryptographically sign images for provenance and policy |
+| DAST / runtime testing | OWASP ZAP, Burp Suite | Test *running* deployments for vulnerabilities (usually separate from build CI) |
+
+### Implemented in zen-pharma-backend
+
+| Category | Tool / mechanism | Where it runs | Notes |
+|----------|------------------|---------------|--------|
+| SAST | **CodeQL** (`security-extended`) | `_java-pr-check.yml`, `_java-build.yml`, `_node-pr-check.yml`, `_node-build.yml` | SARIF uploaded to GitHub **Code scanning** when org/repo settings allow |
+| SAST | **Semgrep** (`p/java`, `p/spring-boot`, `p/javascript`, `p/nodejs`, `p/owasp-top-ten`, etc.) | Same reusable workflows | Optional `SEMGREP_APP_TOKEN` for Semgrep Cloud dashboards |
+| SCA (Node) | **`npm audit`** (fail on HIGH/CRITICAL) | `_node-pr-check.yml`, `_node-build.yml` | |
+| SCA (Java) | **OWASP Dependency Check** (Maven plugin) | Declared in `_java-pr-check.yml`, `_java-build.yml` | **Disabled in YAML today** (`if: false`) — slow NVD download without API key; re-enable after adding `NVD_API_KEY` (see workflow comments) |
+| Secrets in repo | **Gitleaks** | Gitleaks step in all four reusable workflows above | Full history / PR diff uses `fetch-depth: 0` on PR checks; shallow checkout on develop/release builds. Also enable GitHub **Secret scanning** under repo **Code security** for platform-native detection |
+| Container scan | **Trivy** | `_java-build.yml`, `_node-build.yml` only | No image in PR check — Trivy runs after Docker build |
+| Image signing | **Cosign** (keyless via GitHub OIDC) | `_java-build.yml`, `_node-build.yml` | |
+| Automated dependency PRs | **Dependabot** | — | Optional: add `.github/dependabot.yml` (not present in this repo today) |
+
+> **Not covered by this build pipeline:** DAST and production-only runtime tests are out of scope for the workflows above; they are usually run against a deployed environment on a separate schedule or gate.
 
 ---
 
@@ -483,9 +515,11 @@ Stage                     ci-pr-*.yml       ci-*.yml
 ─────                     ───────────       ────────
 Unit tests                     ✓                ✓
 Code coverage (JaCoCo/Jest)    ✓                ✓
+Gitleaks (secrets)             ✓                ✓
 CodeQL SAST                    ✓                ✓
 Semgrep SAST                   ✓                ✓
-OWASP Dependency Check         ✓                ✓
+OWASP Dependency Check         ✓  (disabled*)   ✓  (disabled*)
+npm audit (Node)               ✓                ✓
 Docker build                   ✗                ✓
 Trivy image scan               ✗                ✓
 ECR push                       ✗                ✓
@@ -493,6 +527,7 @@ Cosign sign                    ✗                ✓
 GitOps DEV update              ✗                ✓
 QA promotion PR                ✗                ✓
 
+* OWASP steps present in workflow YAML but `if: false` until NVD/API setup — see Stage 3 and workflows.
 Approx. runtime                ~5 min           ~15 min
 ```
 

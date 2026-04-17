@@ -2,14 +2,15 @@
 #
 # Called by every Java/Spring Boot per-service ci-*.yml workflow.
 # Pipeline stages (all in a single job, sequential):
-#   1. Maven verify  — unit/integration tests + JaCoCo coverage gate (≥ 80%)
-#   2. CodeQL        — Java security-extended queries (instruments Maven build)
-#   3. Semgrep       — java · owasp-top-ten · spring-boot rules
-#   4. OWASP Dep Chk — fail if any dependency CVE CVSS ≥ 7.0
-#   5. Docker build  — multi-stage, non-root UID/GID 1000
-#   6. Trivy         — image scan, fail on HIGH/CRITICAL CVEs
-#   7. ECR push      — tagged as sha-<7chars>
-#   8. Cosign sign   — keyless, GitHub OIDC → Fulcio CA → Rekor transparency log
+#   1. Gitleaks      — secret scan at HEAD (redundant with PR checks if merge-only; catches direct pushes)
+#   2. Maven verify  — unit/integration tests + JaCoCo coverage gate (≥ 80%)
+#   3. CodeQL        — Java security-extended queries (instruments Maven build)
+#   4. Semgrep       — java · owasp-top-ten · spring-boot rules
+#   5. OWASP Dep Chk — fail if any dependency CVE CVSS ≥ 7.0
+#   6. Docker build  — multi-stage, non-root UID/GID 1000
+#   7. Trivy         — image scan, fail on HIGH/CRITICAL CVEs
+#   8. ECR push      — tagged as sha-<7chars>
+#   9. Cosign sign   — keyless, GitHub OIDC → Fulcio CA → Rekor transparency log
 #
 # Outputs: image-tag (sha-<7chars>), registry (ECR registry URL)
 
@@ -70,6 +71,12 @@ jobs:
       # ── Checkout ────────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Shallow checkout — fast; scans current tree at this commit (PR path also runs in _java-pr-check.yml)
+      - name: Gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Derive short-SHA image tag ───────────────────────────────────────────
       - name: Set image tag

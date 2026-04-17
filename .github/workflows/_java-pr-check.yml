@@ -9,7 +9,7 @@
 #   2. Maven verify  — unit/integration tests + JaCoCo coverage
 #   3. CodeQL        — Java security-extended SAST
 #   4. Semgrep       — java · owasp-top-ten · spring-boot rules
-#   5. OWASP Dep Chk — fail if any dependency CVSS ≥ 7.0
+#   5. OWASP Dep Chk — CVSS ≥ 7.0 reported (non-blocking; add NVD_API_KEY for faster NVD sync)
 
 name: Reusable — Java PR Check (no Docker)
 
@@ -28,6 +28,9 @@ on:
         default: false
     secrets:
       SEMGREP_APP_TOKEN:
+        required: false
+      NVD_API_KEY:
+        description: "NIST NVD API key — higher rate limits + faster OWASP NVD updates"
         required: false
 
 jobs:
@@ -107,18 +110,17 @@ jobs:
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
-      # ── OWASP Dependency Check (disabled — NVD database download too slow
-      #    without API key; re-enable after adding NVD_API_KEY secret) ────────
+      # ── OWASP Dependency Check ────────────────────────────────────────────────
+      # Optional repo secret NVD_API_KEY — higher NVD rate limits; see CI-ARCHITECTURE.md
       - name: Cache OWASP NVD database
-        if: false
         uses: actions/cache@v4
         with:
           path: ~/.owasp/dependency-check-data
           key: owasp-nvd-${{ runner.os }}-${{ hashFiles(format('{0}/pom.xml', inputs.service-dir)) }}
           restore-keys: owasp-nvd-${{ runner.os }}-
 
-      - name: OWASP Dependency Check (CVSS ≥ 7.0 fails build)
-        if: false
+      - name: OWASP Dependency Check (CVSS ≥ 7.0 — advisory; non-blocking)
+        continue-on-error: true
         run: |
           cd ${{ inputs.service-dir }}
           mvn org.owasp:dependency-check-maven:check \
@@ -127,9 +129,10 @@ jobs:
             -DdataDirectory=$HOME/.owasp/dependency-check-data \
             -Dformat=HTML \
             --no-transfer-progress
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Upload Dependency Check report
-        if: false
         uses: actions/upload-artifact@v4
         with:
           name: depcheck-${{ inputs.service-name }}

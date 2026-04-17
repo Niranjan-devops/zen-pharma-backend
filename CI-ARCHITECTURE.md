@@ -313,7 +313,7 @@ Common **DevSecOps categories** and **widely used tools** (examples), followed b
 | SAST | **CodeQL** (`security-extended`) | `_java-pr-check.yml`, `_java-build.yml`, `_node-pr-check.yml`, `_node-build.yml` | SARIF uploaded to GitHub **Code scanning** when org/repo settings allow |
 | SAST | **Semgrep** (`p/java`, `p/spring-boot`, `p/javascript`, `p/nodejs`, `p/owasp-top-ten`, etc.) | Same reusable workflows | Optional `SEMGREP_APP_TOKEN` for Semgrep Cloud dashboards |
 | SCA (Node) | **`npm audit`** (fail on HIGH/CRITICAL) | `_node-pr-check.yml`, `_node-build.yml` | |
-| SCA (Java) | **OWASP Dependency Check** (Maven plugin) | Declared in `_java-pr-check.yml`, `_java-build.yml` | **Disabled in YAML today** (`if: false`) — slow NVD download without API key; re-enable after adding `NVD_API_KEY` (see workflow comments) |
+| SCA (Java) | **OWASP Dependency Check** (Maven plugin) | All Java `ci-pr-*.yml` / `ci-*.yml` via `_java-pr-check.yml`, `_java-build.yml` | Add optional repo secret **`NVD_API_KEY`** for faster NVD API sync (see [NVD API key](#nvd-api-key-owasp-dependency-check)) |
 | Secrets in repo | **Gitleaks** | Gitleaks step in all four reusable workflows above | Full history / PR diff uses `fetch-depth: 0` on PR checks; shallow checkout on develop/release builds. Also enable GitHub **Secret scanning** under repo **Code security** for platform-native detection |
 | Container scan | **Trivy** | `_java-build.yml`, `_node-build.yml` only | No image in PR check — Trivy runs after Docker build |
 | Image signing | **Cosign** (keyless via GitHub OIDC) | `_java-build.yml`, `_node-build.yml` | |
@@ -389,11 +389,12 @@ Both SAST tools run on every push — feature branch checks and full builds alik
 
 | | Detail |
 |---|---|
-| Tool | OWASP Dependency Check (`dependency-check/Dependency-Check_Action`) |
+| Tool | OWASP Dependency Check (`org.owasp:dependency-check-maven` via `mvn`) |
 | What it scans | All declared dependencies in `pom.xml` / `package.json` against the NIST National Vulnerability Database (NVD) |
 | What it catches | Known CVEs in third-party libraries — Log4Shell in log4j, Spring4Shell in Spring Framework, prototype pollution in npm packages |
 | NVD cache | Cached keyed on `pom.xml` hash — avoids re-downloading the ~200 MB database on every run |
-| Fail condition | Any dependency with CVSS score ≥ 7.0 (High or Critical) |
+| Maven gate | `-DfailBuildOnCVSS=7` — Maven exits non-zero if any dependency has CVSS ≥ 7.0 |
+| Pipeline | **`continue-on-error: true`** on the OWASP step — findings do **not** fail the job; review the HTML artifact and logs |
 | Artifact | HTML report — 14 days on full build, 3 days on PR check |
 
 > **Why CVSS ≥ 7.0 as the threshold and not ≥ 9.0 (Critical only)?**  
@@ -404,6 +405,20 @@ Both SAST tools run on every push — feature branch checks and full builds alik
 
 > **How is this different from Trivy?**  
 > OWASP Dependency Check scans your *declared source dependencies* — what's listed in `pom.xml` or `package.json`. Trivy scans the *built container image* — OS packages installed by the Dockerfile base image, native libraries, and all runtime dependencies bundled inside the image. A vulnerable OpenSSL version in the Alpine base image would only be caught by Trivy. A vulnerable Spring Boot version in `pom.xml` would be caught by both, but OWASP Dep Check catches it earlier (before Docker build). Both scans are needed.
+
+#### NVD API key (OWASP Dependency Check)
+
+NIST’s NVD 2.0 API applies **strict rate limits** to unauthenticated requests. Without an API key, OWASP Dependency Check can spend a long time waiting between requests when refreshing CVE data. With a key, you get a **higher rate limit**, so the first run (and cache refreshes) complete much faster.
+
+**Create an NVD API key (you do this once):**
+
+1. Open the NIST NVD developer page: [https://nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key).
+2. Submit the form (valid email). NIST emails you a link to verify and receive the key.
+3. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**.
+4. Name: **`NVD_API_KEY`** (exact name — workflows pass it to the Maven plugin via the `NVD_API_KEY` environment variable).
+5. Value: paste the key from NIST. Save.
+
+Reusable workflows use **`secrets: inherit`** on service workflows, so the secret is available to `_java-pr-check.yml` and `_java-build.yml` without extra wiring.
 
 ---
 
@@ -518,7 +533,7 @@ Code coverage (JaCoCo/Jest)    ✓                ✓
 Gitleaks (secrets)             ✓                ✓
 CodeQL SAST                    ✓                ✓
 Semgrep SAST                   ✓                ✓
-OWASP Dependency Check         ✓  (disabled*)   ✓  (disabled*)
+OWASP Dependency Check (Java)  ✓                ✓
 npm audit (Node)               ✓                ✓
 Docker build                   ✗                ✓
 Trivy image scan               ✗                ✓
@@ -527,7 +542,6 @@ Cosign sign                    ✗                ✓
 GitOps DEV update              ✗                ✓
 QA promotion PR                ✗                ✓
 
-* OWASP steps present in workflow YAML but `if: false` until NVD/API setup — see Stage 3 and workflows.
 Approx. runtime                ~5 min           ~15 min
 ```
 
@@ -544,6 +558,8 @@ Approx. runtime                ~5 min           ~15 min
 | `ecr-repository` | string | yes | — | ECR repo name (`_java-build.yml` only) |
 | `aws-region` | string | no | `us-east-1` | AWS region (`_java-build.yml` only) |
 | `needs-database` | boolean | no | `false` | Starts a Postgres 15 sidecar for tests |
+
+**Secrets (reusable):** `NVD_API_KEY` (optional) — NVD API key for faster OWASP Dependency Check NVD sync (repository secret, not a workflow input).
 
 **Outputs (`_java-build.yml` only):** `image-tag` (`sha-<7chars>`), `registry` (ECR URL)
 
@@ -579,6 +595,7 @@ Same inputs as Java equivalents with `node-version` (default `20`) replacing `ne
 | `AWS_ACCOUNT_ID` | all `ci-*.yml` | 12-digit AWS account ID for ECR URL construction |
 | `GITOPS_TOKEN` | all `ci-*.yml`, `promote-prod.yml` | GitHub PAT or App token with `contents: write` on `chandika-s/zen-gitops` |
 | `SEMGREP_APP_TOKEN` | `_java-build.yml`, `_node-build.yml` | Semgrep cloud token (optional — OSS rules work without it) |
+| `NVD_API_KEY` | `_java-pr-check.yml`, `_java-build.yml` (when OWASP enabled) | NIST NVD API key — higher rate limits for OWASP Dependency Check (optional but recommended) |
 
 > **Why a dedicated `GITOPS_TOKEN` instead of using `GITHUB_TOKEN`?**  
 > `GITHUB_TOKEN` is automatically generated per workflow run and scoped to the current repository only. It cannot write to a different repository (`chandika-s/zen-gitops`). A separate PAT or GitHub App token with `contents: write` permission on zen-gitops is required for cross-repo operations. Using a GitHub App token (instead of a personal PAT) is preferred in production — App tokens are not tied to a specific user account and don't expire when someone leaves the organisation.

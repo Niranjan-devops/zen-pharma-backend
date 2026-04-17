@@ -308,3 +308,22 @@ image:
 | [`.github/workflows/promote-prod.yml`](./.github/workflows/promote-prod.yml) | Manual PROD promotion |
 
 Details not covered here (cluster sizing, RDS, ArgoCD SSO, exact Terraform variables) should be taken from **`zen-infra`** and reconciled with role names, region, and cluster identifiers used in these workflows.
+
+---
+
+## Optional — NIST NVD API key (`NVD_API_KEY`)
+
+Java CI runs **OWASP Dependency Check**, which downloads vulnerability metadata from the **NIST National Vulnerability Database (NVD)**. Without an API key, NVD applies strict rate limits and the step can be slow; with a key, requests are faster and more reliable.
+
+This is **optional**: workflows still run OWASP if the secret is missing; adding the key only improves speed and rate limits.
+
+**Steps (once per repository)**
+
+1. Request a key from NIST: open [NVD — Request an API Key](https://nvd.nist.gov/developers/request-an-api-key) and submit the form. Use a mailbox you can access; NIST emails a verification link.
+2. After verifying, copy the API key from NIST’s confirmation.
+3. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+4. **Name:** `NVD_API_KEY` (exact name — workflows pass it to the Maven plugin via the environment).
+5. **Value:** paste the key and save.
+6. Ensure workflows that call `_java-pr-check.yml` / `_java-build.yml` use **`secrets: inherit`** (upstream already does) so the secret is available.
+
+More detail: [NVD API key (OWASP Dependency Check)](./CI-ARCHITECTURE.md#nvd-api-key-owasp-dependency-check) in `CI-ARCHITECTURE.md`.

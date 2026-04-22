@@ -62,7 +62,11 @@ jobs:
           git add .
           git diff --staged --quiet && echo "Already up to date" && exit 0
           git commit -m "ci(dev): update manufacturing-service → ${IMAGE_TAG}"
-          git push
+          for i in 1 2 3 4 5; do
+            git push && break
+            echo "Push attempt $i failed — rebasing and retrying..."
+            git pull --rebase
+          done
 
   open-qa-pr:
     name: Open PR — QA Promotion

@@ -1,15 +1,11 @@
-name: CI/CD — manufacturing-service
-
-# Triggers on push to develop / release branches only.
-# Feature branches and PRs → ci-pr-manufacturing-service.yml
-# PROD promotion → promote-prod.yml (workflow_dispatch)
+name: CI/CD — qc-service
 
 on:
   push:
     branches: [develop, 'release/**']
     paths:
-      - 'manufacturing-service/**'
-      - '.github/workflows/ci-manufacturing-service.yml'
+      - 'qc-service/**'
+      - '.github/workflows/ci-qc-service.yml'
 
 permissions:
   id-token: write
@@ -19,7 +15,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: manufacturing-service
+  ECR_REPOSITORY: qc-service
   GITOPS_REPO: ${{ vars.GITOPS_REPO }}
 
 jobs:
@@ -28,11 +24,11 @@ jobs:
     name: Build & Security Gates
     uses: ./.github/workflows/_java-build.yml
     with:
-      service-name: manufacturing-service
-      service-dir: manufacturing-service
-      ecr-repository: manufacturing-service
+      service-name: qc-service
+      service-dir: qc-service
+      ecr-repository: qc-service
       aws-region: us-east-1
-      needs-database: true
+      needs-database: false
     secrets: inherit
 
   deploy-dev:
@@ -55,18 +51,14 @@ jobs:
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
         run: |
           yq e ".image.tag = \"${IMAGE_TAG}\"" -i \
-            "_gitops/envs/dev/values-manufacturing-service.yaml"
+            "_gitops/envs/dev/values-qc-service.yaml"
           cd _gitops
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
           git diff --staged --quiet && echo "Already up to date" && exit 0
-          git commit -m "ci(dev): update manufacturing-service → ${IMAGE_TAG}"
-          for i in 1 2 3 4 5; do
-            git push && break
-            echo "Push attempt $i failed — rebasing and retrying..."
-            git pull --rebase
-          done
+          git commit -m "ci(dev): update qc-service → ${IMAGE_TAG}"
+          git push
 
   open-qa-pr:
     name: Open PR — QA Promotion
@@ -93,17 +85,17 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           GITOPS_REPO_NAME: ${{ env.GITOPS_REPO }}
         run: |
-          VALUES="_gitops/envs/qa/values-manufacturing-service.yaml"
-          BRANCH="promote/qa/manufacturing-service/${IMAGE_TAG}"
+          VALUES="_gitops/envs/qa/values-qc-service.yaml"
+          BRANCH="promote/qa/qc-service/${IMAGE_TAG}"
 
           if [[ ! -f "$VALUES" ]]; then
-            echo "::warning::$VALUES not found — QA PR skipped. Create envs/qa/values-manufacturing-service.yaml in zen-gitops to enable."
+            echo "::warning::$VALUES not found — QA PR skipped."
             exit 0
           fi
 
           cd _gitops
           git checkout -b "$BRANCH"
-          yq e ".image.tag = \"${IMAGE_TAG}\"" -i "envs/qa/values-manufacturing-service.yaml"
+          yq e ".image.tag = \"${IMAGE_TAG}\"" -i "envs/qa/values-qc-service.yaml"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
@@ -111,13 +103,13 @@ jobs:
             echo "QA already has this image — no PR needed"
             exit 0
           fi
-          git commit -m "promote(qa): manufacturing-service → ${IMAGE_TAG}"
-          git push origin "$BRANCH"
+          git commit -m "promote(qa): qc-service → ${IMAGE_TAG}"
+          git push --force-with-lease origin "$BRANCH"
 
           printf '%s\n' \
             "## QA Promotion" \
             "" \
-            "Service : manufacturing-service" \
+            "Service : qc-service" \
             "Image   : ${IMAGE_TAG}" \
             "Branch  : ${REF_NAME}" \
             "Actor   : ${ACTOR}" \
@@ -128,21 +120,21 @@ jobs:
             "- [ ] No unexpected config changes in this diff" \
             "- [ ] QA team sign-off" \
             "" \
-            "Merging this PR updates envs/qa/values-manufacturing-service.yaml." \
+            "Merging this PR updates envs/qa/values-qc-service.yaml." \
             "ArgoCD (pharma-qa) auto-syncs on merge." > /tmp/pr-body.md
 
-          gh pr create \
-            --repo "$GITOPS_REPO_NAME" \
-            --title "promote(qa): manufacturing-service → ${IMAGE_TAG}" \
-            --body-file /tmp/pr-body.md \
-            --base main \
-            --head "$BRANCH"
+          PR_URL=$(gh pr view --repo "$GITOPS_REPO_NAME" --head "$BRANCH" --json url -q .url 2>/dev/null || true)
+          if [[ -n "$PR_URL" ]]; then
+            echo "::notice title=QA PR already open::${PR_URL}"
+          else
+            gh pr create \
+              --repo "$GITOPS_REPO_NAME" \
+              --title "promote(qa): qc-service → ${IMAGE_TAG}" \
+              --body-file /tmp/pr-body.md \
+              --base main \
+              --head "$BRANCH"
+          fi
 
-          echo "::notice title=QA PR opened::Review and merge in ${GITOPS_REPO_NAME} to deploy to QA."
-
-  # ── 4. DAST — ZAP baseline scan against DEV ─────────────────────────────────
-  # Disabled. Enable by removing `if: false` once DEV_MANUFACTURING_SERVICE_URL is set in
-  # GitHub repository variables (Settings → Secrets and variables → Variables).
   dast:
     name: DAST — ZAP Baseline (DEV)
     if: false
@@ -151,7 +143,7 @@ jobs:
     steps:
       - name: Wait for DEV service to be healthy
         run: |
-          URL="${{ vars.DEV_MANUFACTURING_SERVICE_URL }}/actuator/health"
+          URL="${{ vars.DEV_QC_SERVICE_URL }}/actuator/health"
           for i in $(seq 1 20); do
             curl -sf "$URL" && echo "Healthy" && exit 0
             echo "Attempt $i/20 — retrying in 15s..."
@@ -163,6 +155,6 @@ jobs:
       - name: OWASP ZAP — Baseline scan
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: ${{ vars.DEV_MANUFACTURING_SERVICE_URL }}
+          target: ${{ vars.DEV_QC_SERVICE_URL }}
           fail_action: warn
-          artifact_name: zap-report-manufacturing-service
+          artifact_name: zap-report-qc-service

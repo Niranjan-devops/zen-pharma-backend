@@ -1,4 +1,4 @@
-## CI/CD Architecture — zen-pharma-backend.
+# CI/CD Architecture — zen-pharma-backend.
 
 > **Stack**: GitHub Actions (CI + Promotion) · AWS ECR · ArgoCD (CD) · AWS EKS  
 > **Pattern**: GitOps · Build Once Deploy Many · PR-based Promotion Gates · Supply-Chain Security  

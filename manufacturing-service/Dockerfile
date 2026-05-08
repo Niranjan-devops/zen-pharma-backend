@@ -1,3 +1,4 @@
+# noop: touch this file + push to `develop` to trigger ci-manufacturing-service.yml
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 RUN groupadd -r pharma && useradd -r -g pharma pharma
